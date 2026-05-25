@@ -1,6 +1,23 @@
 require('dotenv').config();
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
+const { Resend } = require('resend');   // ← add this
+
+const app = express();
+app.use(express.json());
+app.use(express.static('public'));
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+
+// Resend client
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+const EMAIL_FROM = process.env.EMAIL_FROM || 'Aurascope <no-reply@example.com>';require('dotenv').config();
+const express = require('express');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(express.json());
