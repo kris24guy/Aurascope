@@ -1,38 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
-const { Resend } = require('resend');   // ← add this
-
-const app = express();
-app.use(express.json());
-app.use(express.static('public'));
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
-
-// Resend client
-
-const resend = new Resend(process.env.RESEND_API_KEY);
-const EMAIL_FROM = process.env.EMAIL_FROM || 'Aurascope <no-reply@example.com>';require('dotenv').config();
-const express = require('express');
-const { createClient } = require('@supabase/supabase-js');
-
-const app = express();
-app.use(express.json());
-app.use(express.static('public'));
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
-Paste this at the very top of server.js, replacing everything from the first require('dotenv').config(); down through the second duplicated supabase block you showed.
-
-
-require('dotenv').config();
-const express = require('express');
-const { createClient } = require('@supabase/supabase-js');
 const { Resend } = require('resend');
 
 const app = express();
@@ -48,25 +16,6 @@ const supabase = createClient(
 const resend = new Resend(process.env.RESEND_API_KEY);
 const EMAIL_FROM = process.env.EMAIL_FROM || 'Aurascope <no-reply@example.com>';
 
-// ── Generate aura reading via Groq ────────────────────────────────────────────
-app.post('/api/reading', async (req, res) => {
-  const { birthDate, name } = req.body;
-  if (!birthDate) return res.status(400).json({ error: 'Birth date required' });
-
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'GROQ_API_KEY not set' });
-
-  const dob = new Date(birthDate);
-  const month = dob.toLocaleString('en-US', { month: 'long' });
-  const day = dob.getDate();
-  const year = dob.getFullYear();
-
-  const prompt = `You are Aurascope, a mystical aura reading system. Generate a personalized 3-frequency color aura reading for someone born on ${month} ${day}, ${year}${name ? ` named ${name}` : ''}.
-
-Respond ONLY with valid JSON, no other text:
-{
-  "hue_1": "hex color code",
-  "hue_1_label": "color name (1-2
 // ── Generate aura reading via Groq ────────────────────────────────────────────
 app.post('/api/reading', async (req, res) => {
   const { birthDate, name } = req.body;
@@ -248,7 +197,7 @@ app.post('/api/unlock', async (req, res) => {
       // still return success to the user so the UI doesn’t break
     }
 
-    // 4) Respond to frontend so it can show full reading on page if needed
+    // 4) Respond to frontend
     return res.json({
       success: true,
       full_reading: reading?.reading_full,
@@ -258,19 +207,6 @@ app.post('/api/unlock', async (req, res) => {
     console.error('Unlock route error:', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
-});
-
-  // Upsert subscriber
-  await supabase.from('subscribers').upsert([{
-    email,
-    name: name || reading?.name,
-    birth_date: reading?.birth_date,
-    primary_hue: reading?.hue_1_label,
-    reading_id: readingId,
-    source: 'app'
-  }], { onConflict: 'email' });
-
-  res.json({ success: true, full_reading: reading?.reading_full, mantra: reading?.mantra });
 });
 
 const PORT = process.env.PORT || 3000;
