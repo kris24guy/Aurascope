@@ -1,0 +1,122 @@
+require('dotenv').config();
+const express = require('express');
+const { createClient } = require('@supabase/supabase-js');
+
+const app = express();
+app.use(express.json());
+app.use(express.static('public'));
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+
+// ── Generate aura reading via Groq ────────────────────────────────────────────
+app.post('/api/reading', async (req, res) => {
+  const { birthDate, name } = req.body;
+  if (!birthDate) return res.status(400).json({ error: 'Birth date required' });
+
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'GROQ_API_KEY not set' });
+
+  const dob = new Date(birthDate);
+  const month = dob.toLocaleString('en-US', { month: 'long' });
+  const day = dob.getDate();
+  const year = dob.getFullYear();
+
+  const prompt = `You are Aurascope, a mystical aura reading system. Generate a personalized 3-frequency color aura reading for someone born on ${month} ${day}, ${year}${name ? ` named ${name}` : ''}.
+
+Respond ONLY with valid JSON, no other text:
+{
+  "hue_1": "hex color code",
+  "hue_1_label": "color name (1-2 words)",
+  "hue_1_strength": "1-2 sentence strength insight",
+  "hue_1_shadow": "1-2 sentence shadow insight",
+  "hue_2": "hex color code",
+  "hue_2_label": "color name (1-2 words)",
+  "hue_2_strength": "1-2 sentence strength insight",
+  "hue_2_shadow": "1-2 sentence shadow insight",
+  "hue_3": "hex color code",
+  "hue_3_label": "color name (1-2 words)",
+  "hue_3_strength": "1-2 sentence strength insight",
+  "hue_3_shadow": "1-2 sentence shadow insight",
+  "preview": "2-3 sentence teaser reading that feels eerily accurate — hint at deeper truths but don't reveal everything. Make it feel personal and specific to this birth date.",
+  "full_reading": "5-6 sentence deep reading covering all three frequencies working together, their combined energy, life purpose alignment, and current energetic theme",
+  "mantra": "A unique 6-10 word sacred mantra specific to this person's frequency signature"
+}
+
+Rules:
+- Colors must feel mystical and rare (not basic red/blue/green — think: bismuth violet, abyssal teal, ember gold)
+- The reading must feel uncannily specific to this birth date
+- Tone: mystical, direct, slightly disbelieving in its accuracy`;
+
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'openai/gpt-oss-120b',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      return res.status(500).json({ error: err.error?.message || 'AI error' });
+    }
+
+    const result = await response.json();
+    let text = result.choices[0].message.content.trim();
+    text = text.replace(/```json|```/g, '').trim();
+    const reading = JSON.parse(text);
+
+    // Save to Supabase
+    const { data, error } = await supabase.from('readings').insert([{
+      birth_date: birthDate,
+      name: name || null,
+      hue_1: reading.hue_1,
+      hue_2: reading.hue_2,
+      hue_3: reading.hue_3,
+      hue_1_label: reading.hue_1_label,
+      hue_2_label: reading.hue_2_label,
+      hue_3_label: reading.hue_3_label,
+      reading_preview: reading.preview,
+      reading_full: reading.full_reading,
+      mantra: reading.mantra
+    }]).select().single();
+
+    if (error) console.error('Supabase error:', error);
+
+    res.json({ ...reading, id: data?.id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Unlock with email ─────────────────────────────────────────────────────────
+app.post('/api/unlock', async (req, res) => {
+  const { readingId, email, name } = req.body;
+  if (!readingId || !email) return res.status(400).json({ error: 'Missing fields' });
+
+  // Update reading with email
+  const { data: reading } = await supabase
+    .from('readings').update({ email, email_unlocked: true, email_unlocked_at: new Date().toISOString() })
+    .eq('id', readingId).select().single();
+
+  // Upsert subscriber
+  await supabase.from('subscribers').upsert([{
+    email,
+    name: name || reading?.name,
+    birth_date: reading?.birth_date,
+    primary_hue: reading?.hue_1_label,
+    reading_id: readingId,
+    source: 'app'
+  }], { onConflict: 'email' });
+
+  res.json({ success: true, full_reading: reading?.reading_full, mantra: reading?.mantra });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`✨ Aurascope → http://localhost:${PORT}`));
