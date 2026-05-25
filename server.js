@@ -117,10 +117,109 @@ app.post('/api/unlock', async (req, res) => {
   const { readingId, email, name } = req.body;
   if (!readingId || !email) return res.status(400).json({ error: 'Missing fields' });
 
-  // Update reading with email
-  const { data: reading } = await supabase
-    .from('readings').update({ email, email_unlocked: true, email_unlocked_at: new Date().toISOString() })
-    .eq('id', readingId).select().single();
+  try {
+    // 1) Update reading with email + fetch full record
+    const { data: reading, error: updateError } = await supabase
+      .from('readings')
+      .update({
+        email,
+        email_unlocked: true,
+        email_unlocked_at: new Date().toISOString(),
+      })
+      .eq('id', readingId)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error('Supabase update error:', updateError);
+      return res.status(500).json({ error: 'Failed to update reading' });
+    }
+
+    // 2) Upsert subscriber
+    const subscriberName = name || reading?.name || null;
+
+    const { error: upsertError } = await supabase.from('subscribers').upsert(
+      [{
+        email,
+        name: subscriberName,
+        birth_date: reading?.birth_date,
+        primary_hue: reading?.hue_1_label,
+        reading_id: readingId,
+        source: 'app',
+      }],
+      { onConflict: 'email' }
+    );
+
+    if (upsertError) {
+      console.error('Supabase upsert error:', upsertError);
+      // don’t block the user, just log it
+    }
+
+    // 3) Send full reading email via Resend
+    try {
+      const personName = subscriberName || 'there';
+      const subject = `Your Aurascope reading is ready, ${personName}`;
+
+      const preview = reading?.reading_preview || '';
+      const full = reading?.reading_full || '';
+      const mantra = reading?.mantra || '';
+
+      const hue1 = reading?.hue_1_label || '';
+      const hue2 = reading?.hue_2_label || '';
+      const hue3 = reading?.hue_3_label || '';
+
+      const html = `
+        <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #111;">
+          <p>Hi ${personName},</p>
+
+          <p>Here’s the full version of the Aurascope you just unlocked.</p>
+
+          <h2 style="margin-top: 1.5rem;">Your three main hues</h2>
+          <ul>
+            <li><strong>${hue1}</strong></li>
+            <li><strong>${hue2}</strong></li>
+            <li><strong>${hue3}</strong></li>
+          </ul>
+
+          ${preview ? `<p><em>Teaser you saw on the site:</em> ${preview}</p>` : ''}
+
+          <h2 style="margin-top: 1.5rem;">Your full Aurascope</h2>
+          <p>${full.replace(/\n/g, '  
+')}</p>
+
+          ${mantra ? `
+            <h3 style="margin-top: 1.5rem;">Mantra to keep nearby</h3>
+            <p style="font-style: italic;">“${mantra}”</p>
+          ` : ''}
+
+          <p style="margin-top: 2rem;">If this reading feels accurate (or if something feels off), hit reply and tell me what landed. Both reactions are useful mirrors.</p>
+
+          <p>— Aurascope</p>
+        </div>
+      `;
+
+      await resend.emails.send({
+        from: EMAIL_FROM,
+        to: email,
+        subject,
+        html,
+      });
+    } catch (emailErr) {
+      console.error('Resend email error:', emailErr);
+      // still return success to the user so the UI doesn’t break
+    }
+
+    // 4) Respond to frontend so it can show full reading on page if needed
+    return res.json({
+      success: true,
+      full_reading: reading?.reading_full,
+      mantra: reading?.mantra,
+    });
+  } catch (err) {
+    console.error('Unlock route error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
   // Upsert subscriber
   await supabase.from('subscribers').upsert([{
